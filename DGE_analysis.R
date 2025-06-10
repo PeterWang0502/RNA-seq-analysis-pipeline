@@ -13,6 +13,7 @@ library(tibble)
 library(pheatmap)
 library(RColorBrewer)
 library(VennDiagram)
+library(tximport)
 #install.packages('https://cran.r-project.org/src/contrib/Archive/dbplyr/dbplyr_2.3.4.tar.gz', repos = NULL)
 #package.version('dbplyr')
 #package.version('BiocFileCache')
@@ -20,7 +21,15 @@ library(VennDiagram)
 mart = useMart(biomart = "ensembl", dataset = "mmusculus_gene_ensembl", host = "jul2023.archive.ensembl.org") # "may2017.archive.ensembl.org"
 ens = getBM(attributes = c("ensembl_gene_id", "external_gene_name"), mart = mart)
 
+# tximport on RSEM output
+dir <- '/Users/peter/Desktop/rsem_results'
+files <- file.path(dir, list.files(dir))
+names(files) <- lapply(files, function(x) substr(strsplit(x, '\\.')[[1]][1], 54, 100))
+txi.rsem <- tximport(files, type = "rsem", txIn = FALSE, txOut = FALSE)
+head(txi.rsem$counts)
+write.table(txi.rsem$counts, file="tximport-count-combined.txt", quote=F, sep='\t')
 
+### Analysis starts
 
 setwd("/Users/peter/Desktop/") # input your pipeline output directory 
 count = read.delim("Quant.rsem.genes.age.matrix", stringsAsFactors = F, row.names = 1) # input your output file name here
@@ -99,12 +108,8 @@ ggplot(volcanoData, aes(x = logFC, y = negLogPval)) + ggtitle("Volcano Plot") +
 
 # DeSeq2
 meta.level = meta
-meta.level$group = factor(meta.level$group, levels=c("MA_OLD","MA_YOU"))
+meta.level$group = factor(meta.level$group, levels=c("MA_OLD","MA_YOU")) # input groups of comparison here
 dds <- DESeqDataSetFromMatrix(countData = count, colData = meta.level, design = ~group)
-#dds <- estimateSizeFactors(dds)
-#keep <- rowSums(counts(dds, normalized = T) > 5) > 4
-#table(keep)
-#dds <- dds[keep,]
 dds <- DESeq(dds)
 rld <- rlog(dds, blind=TRUE)
 
@@ -121,7 +126,6 @@ pheatmap(assay(ntd)[select,], cluster_rows=T, show_rownames=F, cluster_cols=T, s
 resultsNames(dds)
 plotDispEsts(dds)
 resLFC <- lfcShrink(dds, coef = 2, type="apeglm")
-#resLFC = results(dds, contrast = c("group", "CHI", "MOT"))
 summary(resLFC)
 resLFC <- resLFC[order(resLFC$padj),]
 sum(resLFC$padj < 0.05, na.rm=TRUE)
@@ -131,15 +135,11 @@ hist(resLFC$pvalue[resLFC$baseMean > 1], breaks = 0:20/20, col = "grey50", borde
 res = as.data.frame(resLFC) #[1:3000,]
 res = res[!is.na(res$padj),]
 res = merge(res, ens, by.x = "row.names", by.y = "ensembl_gene_id", all.x = T, sort = F)
-#res = rename(res, Row.names = "geneID")
 colnames(res)[1] = 'geneID'
 write.table(res, "de_table_deseq2.txt", quote = F, sep = '\t', row.names = F)
 res = column_to_rownames(res, var = "geneID")
 res$threshold = ifelse(abs(res$log2FoldChange)>2 & res$padj<0.01 , ifelse(abs(res$log2FoldChange)>3 & res$padj<0.001, "A", "B"), "C")
 table(res$threshold)
-#write.table(res$external_gene_name, "all_differential_gene.txt", quote = F, row.names = F, col.names = F)
-#write.table(res$external_gene_name[res$padj < 0.05 & 2^res$log2FoldChange > 1.05], "up_differential_gene.txt", quote = F, row.names = F, col.names = F)
-#write.table(res$external_gene_name[res$padj < 0.05 & 2^res$log2FoldChange < 0.95], "down_differential_gene.txt", quote = F, row.names = F, col.names = F)
 volcanoData = cbind.data.frame(res$log2FoldChange, -log10(res$padj), res$external_gene_name, res$threshold)
 colnames(volcanoData) = c("logFC","negLogPval","annotation", "threshold")
 rownames(volcanoData) = rownames(res)
@@ -148,7 +148,6 @@ volcanoData$label = ifelse(volcanoData$threshold=='A', volcanoData$annotation, "
 ggplot(volcanoData, aes(x = logFC, y = negLogPval)) + ggtitle("Volcano Plot") +
   geom_point(aes(color = threshold), size = 2.5) + 
   scale_color_manual(values = c("A" = "red", "B" = "orange", "C" = "green", "D" = "black")) +
-  #geom_text_repel(aes(label = ifelse(threshold == "A" | threshold == "B", as.character(annotation), '')), hjust = 0, vjust = 0) +
   geom_text(label = volcanoData$label, nudge_x = 0.25, nudge_y = 0.25, check_overlap = F, vjust="inward",hjust='inward')
 
 rld <- rlog(dds, blind=FALSE)
